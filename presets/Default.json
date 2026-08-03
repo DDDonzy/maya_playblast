@@ -1,0 +1,9 @@
+{
+  "auto_play": true,
+  "codec": "h264",
+  "container": "mp4",
+  "frame_format": "jpg",
+  "quality": "high",
+  "resolution": "view",
+  "scale": 100
+}

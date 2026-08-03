@@ -1,0 +1,23 @@
+version = 1
+revision = 3
+requires-python = ">=3.13"
+
+[[package]]
+name = "maya-playblast"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "types-maya" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "types-maya", specifier = ">=0.6.1" }]
+
+[[package]]
+name = "types-maya"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/58/c2/7fbc1adb2efada5c32573932d869dfb2cb5909dbdf50643330154ea5ba46/types_maya-0.6.1.tar.gz", hash = "sha256:655a5f541dd3a96e05b2ca7ca08eeec961b347d26bcd7e2705bfe6ef2b2e68ec", size = 412410, upload-time = "2026-06-01T19:42:31.79Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/06/c8/9bbe511d32816b3a6e936e20dadedda8240b1dbc8b2f762b4fa04131f5ac/types_maya-0.6.1-py3-none-any.whl", hash = "sha256:b98c2e3e0e6baab9b0e9961019f762ec5297c295b4951a3e20c7f4413b19902e", size = 404039, upload-time = "2026-06-01T19:42:30.657Z" },
+]
