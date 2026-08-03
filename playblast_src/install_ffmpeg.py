@@ -46,7 +46,7 @@ def install() -> int:
 
     subprocess.run(
         [
-            python,
+            str(python),
             "-m",
             "pip",
             "install",
@@ -55,7 +55,7 @@ def install() -> int:
             "--index-url",
             index,
             "--target",
-            TARGET,
+            str(TARGET),
             "imageio-ffmpeg",
         ],
         check=True,
