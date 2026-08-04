@@ -361,8 +361,14 @@ def playblast(
     scale: int = DEFAULT_SCALE,
     quality: str = DEFAULT_QUALITY,
     auto_play: bool = False,
+    clean_cache: bool = True,
 ) -> Path:
-    """输出激活 viewport 为视频，并清理临时图像序列目录。"""
+    """输出激活 viewport 为视频。
+
+    Args:
+        clean_cache: True 时转换完成后清理临时图像序列目录；
+            False 时保留中间图片（便于排查 FFmpeg / 序列问题）。
+    """
     frame_format = frame_format.lower()
     container = container.lower()
     codec = codec.lower()
@@ -391,17 +397,21 @@ def playblast(
             quality=quality,
         )
     except Exception:
-        shutil.rmtree(sequence_dir, ignore_errors=True)
+        if clean_cache:
+            shutil.rmtree(sequence_dir, ignore_errors=True)
         raise
 
-    try:
-        shutil.rmtree(sequence_dir)
-    except FileNotFoundError:
-        pass
-    except OSError as err:
-        raise RuntimeError(
-            f"Video created, but temporary directory cleanup failed: {sequence_dir}"
-        ) from err
+    if clean_cache:
+        try:
+            shutil.rmtree(sequence_dir)
+        except FileNotFoundError:
+            pass
+        except OSError as err:
+            raise RuntimeError(
+                f"Video created, but temporary directory cleanup failed: {sequence_dir}"
+            ) from err
+    else:
+        print(f"Temporary image sequence kept at: {sequence_dir}")
     if auto_play:
         cmds.launch(movie=result.as_posix())
     maya.utils.executeDeferred(_notify_output_path, result.as_posix())
