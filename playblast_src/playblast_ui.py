@@ -1,4 +1,7 @@
-"""Maya timeSlider 旁的 Playblast 按钮。"""
+"""Maya timeSlider 旁的 Playblast 按钮。
+
+左键点击触发 playblast；右键点击弹出输出选项菜单。
+"""
 
 from __future__ import annotations
 
@@ -7,22 +10,15 @@ import re
 from pathlib import Path
 
 from maya import cmds
-from maya import OpenMayaUI as omui
 
 import shiboken2  # ty:ignore[unresolved-import]
 from PySide2 import QtCore, QtGui, QtWidgets  # ty:ignore[unresolved-import]
 
+
 import playblast
+import attach_timeslider
 
 BUTTON_NAME = "playblastButton"
-BUTTON_HOST_NAME = "playblastButtonHost"
-_LAYOUT_FILTER_NAME = "playblastButtonLayoutFilter"
-HIGHLIGHT_FRAME_NAME = "playblastHighlightFrame"
-_BUTTON_BORDER_WIDTH = 4
-_ICON_ALPHA_THRESHOLD = 8
-_ICON_OVERSCAN = 8
-_HIGHLIGHT_PADDING = 6
-_HOVER_ICON_OPACITY = 72
 
 MENU_NAME = "playblastOptionsMenu"
 _AUTO_PLAY_OPTION = "playblastToolsAutoPlay"
@@ -33,7 +29,6 @@ _RESOLUTION_OPTION = "playblastToolsResolution"
 _SCALE_OPTION = "playblastToolsScale"
 _QUALITY_OPTION = "playblastToolsQuality"
 _PRESET_OPTION = "playblastToolsPreset"
-_HIGHLIGHT_OPTION = "playblastToolsHighlight"
 
 _FRAME_FORMAT_LABELS = (("jpg", "JPEG"), ("png", "PNG"))
 _CONTAINER_LABELS = (("mp4", "MP4"), ("mkv", "MKV"), ("mov", "MOV"))
@@ -59,11 +54,7 @@ _PRESET_DIR = Path(__file__).resolve().parent.parent / "presets"
 _INVALID_PRESET_NAME = re.compile(r'[<>:"/\\|?*]')
 
 _BUTTON = None
-_BUTTON_HOST = None
-_HIGHLIGHT_FRAME = None
-_MENU = None
-_MENU_FILTER = None
-_LAYOUT_FILTER = None
+_DEBUG_WINDOW = None
 
 
 class _OptionsMenuEventFilter(QtCore.QObject):
@@ -105,89 +96,6 @@ class _OptionsMenuEventFilter(QtCore.QObject):
         return super().eventFilter(watched, event)
 
 
-class _PlaybackButtonLayoutFilter(QtCore.QObject):
-    """保持按钮与 Maya 原生播放按钮像素级对齐。"""
-
-    def __init__(
-        self,
-        row: QtWidgets.QWidget,
-        reference: QtWidgets.QWidget,
-        host: QtWidgets.QWidget,
-        button: QtWidgets.QPushButton,
-        highlight_parent: QtWidgets.QWidget,
-        highlight_frame: QtWidgets.QFrame,
-    ) -> None:
-        super().__init__(row)
-        self.setObjectName(_LAYOUT_FILTER_NAME)
-        self._row = row
-        self._reference = reference
-        self._host = host
-        self._button = button
-        self._highlight_parent = highlight_parent
-        self._highlight_frame = highlight_frame
-
-    def _highlight_geometry(self) -> QtCore.QRect:
-        pixmap = self._button.icon().pixmap(self._button.iconSize())
-        if pixmap.isNull():
-            icon_size = self._button.iconSize()
-        else:
-            ratio = max(1.0, pixmap.devicePixelRatio())
-            icon_size = QtCore.QSize(
-                round(pixmap.width() / ratio),
-                round(pixmap.height() / ratio),
-            )
-        icon_position = QtCore.QPoint(
-            round((self._button.width() - icon_size.width()) / 2),
-            round((self._button.height() - icon_size.height()) / 2),
-        )
-        top_left = self._button.mapTo(self._highlight_parent, icon_position)
-        padding = QtCore.QPoint(_HIGHLIGHT_PADDING, _HIGHLIGHT_PADDING)
-        frame_size = icon_size + QtCore.QSize(
-            2 * _HIGHLIGHT_PADDING, 2 * _HIGHLIGHT_PADDING
-        )
-        return QtCore.QRect(top_left - padding, frame_size)
-
-    def align(self) -> None:
-        widgets = (
-            self._row,
-            self._reference,
-            self._host,
-            self._button,
-            self._highlight_parent,
-            self._highlight_frame,
-        )
-        if not all(shiboken2.isValid(widget) for widget in widgets):
-            return
-        button_size = self._reference.size()
-        host_size = QtCore.QSize(button_size.width(), self._row.height())
-        if self._host.size() != host_size:
-            self._host.setFixedSize(host_size)
-        if self._button.size() != button_size:
-            self._button.setFixedSize(button_size)
-        position = QtCore.QPoint(0, self._reference.y() - self._host.y())
-        if self._button.pos() != position:
-            self._button.move(position)
-
-        visible = self._button.isVisible() and _read_highlight()
-        if visible:
-            self._highlight_frame.setGeometry(self._highlight_geometry())
-            self._highlight_frame.raise_()
-            self._highlight_frame.show()
-        else:
-            self._highlight_frame.hide()
-
-    def eventFilter(self, watched, event) -> bool:
-        if event.type() in (
-            QtCore.QEvent.Hide,
-            QtCore.QEvent.LayoutRequest,
-            QtCore.QEvent.Move,
-            QtCore.QEvent.Resize,
-            QtCore.QEvent.Show,
-        ):
-            QtCore.QTimer.singleShot(0, self.align)
-        return super().eventFilter(watched, event)
-
-
 def _read_choice(option: str, allowed: tuple[str, ...], default: str) -> str:
     if cmds.optionVar(exists=option):
         value = str(cmds.optionVar(query=option)).lower()
@@ -206,12 +114,6 @@ def _read_auto_play() -> bool:
     if not cmds.optionVar(exists=_AUTO_PLAY_OPTION):
         cmds.optionVar(intValue=(_AUTO_PLAY_OPTION, 1))
     return bool(cmds.optionVar(query=_AUTO_PLAY_OPTION))
-
-
-def _read_highlight() -> bool:
-    if not cmds.optionVar(exists=_HIGHLIGHT_OPTION):
-        cmds.optionVar(intValue=(_HIGHLIGHT_OPTION, 1))
-    return bool(cmds.optionVar(query=_HIGHLIGHT_OPTION))
 
 
 def _read_video_settings() -> tuple[str, str]:
@@ -327,22 +229,16 @@ def _load_presets() -> dict[str, dict[str, object]]:
     default_settings = _default_settings()
     default_path = _PRESET_DIR / f"{_DEFAULT_PRESET_NAME}.json"
     try:
-        stored_default = _normalize_preset_settings(
-            json.loads(default_path.read_text(encoding="utf-8"))
-        )
+        stored_default = _normalize_preset_settings(json.loads(default_path.read_text(encoding="utf-8")))
     except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
         stored_default = None
     if stored_default != default_settings:
         _save_preset(_DEFAULT_PRESET_NAME, default_settings)
 
     presets = {}
-    for path in sorted(
-        _PRESET_DIR.glob("*.json"), key=lambda item: item.stem.casefold()
-    ):
+    for path in sorted(_PRESET_DIR.glob("*.json"), key=lambda item: item.stem.casefold()):
         try:
-            presets[path.stem] = _normalize_preset_settings(
-                json.loads(path.read_text(encoding="utf-8"))
-            )
+            presets[path.stem] = _normalize_preset_settings(json.loads(path.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, OSError, ValueError) as err:
             cmds.warning(f'Ignoring invalid preset "{path}": {err}')
     return presets
@@ -427,9 +323,7 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
     menu.addSection("Video Codec")
     codec_actions = _add_choice_actions(menu, _CODEC_LABELS, codec)
     for value, action in codec_actions.items():
-        action.triggered.connect(
-            lambda _checked=False, choice=value: set_menu_choice(_CODEC_OPTION, choice)
-        )
+        action.triggered.connect(lambda _checked=False, choice=value: set_menu_choice(_CODEC_OPTION, choice))
 
     def select_container(choice: str, manual: bool = False) -> None:
         _set_choice(_CONTAINER_OPTION, choice)
@@ -449,9 +343,7 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
             mark_custom_settings()
 
     for value, action in container_actions.items():
-        action.triggered.connect(
-            lambda _checked=False, choice=value: select_container(choice, True)
-        )
+        action.triggered.connect(lambda _checked=False, choice=value: select_container(choice, True))
     select_container(container)
     menu.addSection("Frame Format")
     frame_format = _read_choice(
@@ -461,11 +353,7 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
     )
     frame_actions = _add_choice_actions(menu, _FRAME_FORMAT_LABELS, frame_format)
     for value, action in frame_actions.items():
-        action.triggered.connect(
-            lambda _checked=False, choice=value: set_menu_choice(
-                _FRAME_FORMAT_OPTION, choice
-            )
-        )
+        action.triggered.connect(lambda _checked=False, choice=value: set_menu_choice(_FRAME_FORMAT_OPTION, choice))
 
     menu.addSection("Resolution")
     resolution = _read_choice(
@@ -475,19 +363,11 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
     )
     resolution_group = QtWidgets.QActionGroup(menu)
     resolution_group.setExclusive(True)
-    resolution_actions = _add_choice_actions(
-        menu, _RESOLUTION_LABELS[:5], resolution, resolution_group
-    )
+    resolution_actions = _add_choice_actions(menu, _RESOLUTION_LABELS[:5], resolution, resolution_group)
     menu.addSeparator()
-    resolution_actions.update(
-        _add_choice_actions(menu, _RESOLUTION_LABELS[5:], resolution, resolution_group)
-    )
+    resolution_actions.update(_add_choice_actions(menu, _RESOLUTION_LABELS[5:], resolution, resolution_group))
     for value, action in resolution_actions.items():
-        action.triggered.connect(
-            lambda _checked=False, choice=value: set_menu_choice(
-                _RESOLUTION_OPTION, choice
-            )
-        )
+        action.triggered.connect(lambda _checked=False, choice=value: set_menu_choice(_RESOLUTION_OPTION, choice))
 
     menu.addSection("Quality")
     quality = _read_choice(
@@ -497,11 +377,7 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
     )
     quality_actions = _add_choice_actions(menu, _QUALITY_LABELS, quality)
     for value, action in quality_actions.items():
-        action.triggered.connect(
-            lambda _checked=False, choice=value: set_menu_choice(
-                _QUALITY_OPTION, choice
-            )
-        )
+        action.triggered.connect(lambda _checked=False, choice=value: set_menu_choice(_QUALITY_OPTION, choice))
 
     menu.addSection("Scale")
     scale = _read_choice(
@@ -511,9 +387,7 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
     )
     scale_actions = _add_choice_actions(menu, _SCALE_LABELS, scale)
     for value, action in scale_actions.items():
-        action.triggered.connect(
-            lambda _checked=False, choice=value: set_menu_choice(_SCALE_OPTION, choice)
-        )
+        action.triggered.connect(lambda _checked=False, choice=value: set_menu_choice(_SCALE_OPTION, choice))
 
     presets = _load_presets()
     menu.addSection("Preset")
@@ -547,9 +421,7 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
         action = preset_menu.addAction(name)
         action.setCheckable(True)
         preset_group.addAction(action)
-        action.triggered.connect(
-            lambda _checked=False, preset_name=name: apply_preset(preset_name)
-        )
+        action.triggered.connect(lambda _checked=False, preset_name=name: apply_preset(preset_name))
         preset_actions[name] = action
         return action
 
@@ -573,11 +445,7 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
         name = name.strip()
         if not accepted or not name:
             return
-        if (
-            name.casefold() == _DEFAULT_PRESET_NAME.casefold()
-            or _INVALID_PRESET_NAME.search(name)
-            or name != name.rstrip(". ")
-        ):
+        if name.casefold() == _DEFAULT_PRESET_NAME.casefold() or _INVALID_PRESET_NAME.search(name) or name != name.rstrip(". "):
             QtWidgets.QMessageBox.warning(
                 button,
                 "Invalid Preset Name",
@@ -653,18 +521,7 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
             current_preset = stored_preset
     apply_preset(current_preset)
 
-    menu.addSeparator()
-    highlight_action = menu.addAction("Hight Light")
-    highlight_action.setCheckable(True)
-    highlight_action.setChecked(_read_highlight())
-
-    def set_highlight(checked: bool) -> None:
-        cmds.optionVar(intValue=(_HIGHLIGHT_OPTION, int(checked)))
-        if _LAYOUT_FILTER is not None and shiboken2.isValid(_LAYOUT_FILTER):
-            _LAYOUT_FILTER.align()
-
-    highlight_action.toggled.connect(set_highlight)
-
+    menu.addSection("Playblast")
     playblast_action = menu.addAction(QtGui.QIcon(":playblast.png"), "Playblast")
     playblast_action.triggered.connect(_run_playblast)
 
@@ -672,7 +529,18 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
     return menu
 
 
+def _hover_pixmap(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
+    """把 PNG 图标提亮一档，用于悬停高亮（不画背景框）。"""
+    highlighted = QtGui.QPixmap(pixmap)
+    painter = QtGui.QPainter(highlighted)
+    painter.setCompositionMode(QtGui.QPainter.CompositionMode_SourceAtop)
+    painter.fillRect(highlighted.rect(), QtGui.QColor(255, 255, 255, 110))
+    painter.end()
+    return highlighted
+
+
 def _crop_transparent_padding(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
+    """裁掉图标四周的透明留白，让图形尽量占满，放大后更显眼。"""
     image = pixmap.toImage()
     if image.isNull() or not image.hasAlphaChannel():
         return pixmap
@@ -683,7 +551,7 @@ def _crop_transparent_padding(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
     bottom = -1
     for y in range(image.height()):
         for x in range(image.width()):
-            if image.pixelColor(x, y).alpha() <= _ICON_ALPHA_THRESHOLD:
+            if image.pixelColor(x, y).alpha() <= 8:
                 continue
             left = min(left, x)
             top = min(top, y)
@@ -695,173 +563,72 @@ def _crop_transparent_padding(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
     return pixmap.copy(left, top, right - left + 1, bottom - top + 1)
 
 
-def _highlight_icon_pixmap(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
-    highlighted = QtGui.QPixmap(pixmap)
-    painter = QtGui.QPainter(highlighted)
-    painter.setCompositionMode(QtGui.QPainter.CompositionMode_SourceAtop)
-    painter.fillRect(
-        highlighted.rect(), QtGui.QColor(255, 255, 255, _HOVER_ICON_OPACITY)
-    )
-    painter.end()
-    return highlighted
+def _build_button(parent: QtWidgets.QWidget | None = None) -> QtWidgets.QPushButton:
+    """在 parent 下创建 Playblast 按钮，接好左键播放 / 右键菜单逻辑。"""
+    button = QtWidgets.QPushButton(parent)
+    button.setObjectName(BUTTON_NAME)
+    button.setFixedSize(32, 32)
 
-
-def _style_button(
-    button: QtWidgets.QPushButton,
-) -> tuple[QtGui.QIcon, QtGui.QIcon]:
-    icon_size = max(
-        1,
-        min(button.width(), button.height())
-        - 2 * _BUTTON_BORDER_WIDTH
-        + _ICON_OVERSCAN,
-    )
-    background_content_width = max(1, button.width() - 2 * _BUTTON_BORDER_WIDTH)
-    background_content_height = max(1, button.height() - 2 * _BUTTON_BORDER_WIDTH)
-    pixmap = _crop_transparent_padding(QtGui.QPixmap(":playblast.png")).scaled(
+    # 强制缩放：先裁透明留白，再平滑放大到接近按钮大小，让图标显眼
+    icon_size = button.height() - 2
+    base = _crop_transparent_padding(QtGui.QPixmap(":playblast.png")).scaled(
         icon_size,
         icon_size,
         QtCore.Qt.KeepAspectRatio,
         QtCore.Qt.SmoothTransformation,
     )
-    normal_icon = QtGui.QIcon(pixmap)
-    hover_icon = QtGui.QIcon(_highlight_icon_pixmap(pixmap))
+    normal_icon = QtGui.QIcon(base)
+    hover_icon = QtGui.QIcon(_hover_pixmap(base))
+
     button.setIcon(normal_icon)
     button.setIconSize(QtCore.QSize(icon_size, icon_size))
     button.setToolTip("Playblast\nRight-click for output options")
-    button.setStyleSheet(
-        "QPushButton#playblastButton {"
-        f"border: {_BUTTON_BORDER_WIDTH}px solid transparent; "
-        "border-radius: 4px; background: transparent; padding: 0;"
-        f"min-width: {background_content_width}px; "
-        f"max-width: {background_content_width}px; "
-        f"min-height: {background_content_height}px; "
-        f"max-height: {background_content_height}px; "
-        "}"
-        "QPushButton#playblastButton:hover {background: transparent;}"
-        "QPushButton#playblastButton:pressed {background: transparent;}"
-    )
-    return normal_icon, hover_icon
+    # 无背景框：透明背景 + 无边框，悬停高亮直接体现在 PNG 图标上
+    button.setStyleSheet(f"QPushButton#{BUTTON_NAME} {{background: transparent; border: none;}}")
+
+    menu = _create_options_menu(button)
+    menu_filter = _OptionsMenuEventFilter(menu, button, normal_icon, hover_icon)
+    button.installEventFilter(menu_filter)
+    button.clicked.connect(_run_playblast)
+    return button
 
 
-def install_button() -> QtWidgets.QPushButton:
-    """将 Playblast 按钮安装到 Maya 原生播放控件的 rowLayout。"""
-    global _BUTTON, _BUTTON_HOST, _HIGHLIGHT_FRAME
-    global _MENU, _MENU_FILTER, _LAYOUT_FILTER
+def show_debug_window() -> QtWidgets.QDialog:
+    """调试用：在独立窗口中显示 Playblast 按钮（不挂到 Maya 原生控件）。
+
+    左键触发 playblast；右键弹出输出选项菜单。重复调用会复用窗口。
+    """
+    global _DEBUG_WINDOW
+
+    if _DEBUG_WINDOW is not None and shiboken2.isValid(_DEBUG_WINDOW):
+        _DEBUG_WINDOW.show()
+        _DEBUG_WINDOW.raise_()
+        _DEBUG_WINDOW.activateWindow()
+        return _DEBUG_WINDOW
+
+    _DEBUG_WINDOW = QtWidgets.QDialog()
+    _DEBUG_WINDOW.setObjectName("playblastDebugWindow")
+    _DEBUG_WINDOW.setWindowTitle("Playblast Button Debug")
+    layout = QtWidgets.QVBoxLayout(_DEBUG_WINDOW)
+    layout.addWidget(_build_button(_DEBUG_WINDOW))
+    _DEBUG_WINDOW.show()
+    return _DEBUG_WINDOW
+
+
+def create_button() -> QtWidgets.QPushButton:
+    """创建 Playblast 按钮（左键播放，右键选项），不附加到 Maya。
+
+    返回的按钮没有父控件，需要自己调用 show() 或挂到某个布局/窗口。
+    """
+    global _BUTTON
 
     if _BUTTON is not None and shiboken2.isValid(_BUTTON):
         return _BUTTON
 
-    controls = cmds.lsUI(type="timeControl")
-    if not controls:
-        raise RuntimeError("Maya timeSlider was not found.")
-
-    pointer = omui.MQtUtil.findControl(controls[0])
-    if pointer is None:
-        raise RuntimeError("Cannot access the Maya timeSlider widget.")
-
-    slider = shiboken2.wrapInstance(int(pointer), QtWidgets.QWidget)
-    frame = slider.parentWidget().parentWidget()
-    form = frame.parentWidget()
-    form_name = form.objectName()
-    frame_name = frame.objectName()
-    children = cmds.formLayout(form_name, query=True, childArray=True)
-    time_field_row = children[children.index(frame_name) + 1]
-    playback_controls = children[children.index(time_field_row) + 1]
-    playback_short_name = playback_controls.rsplit("|", 1)[-1]
-    row = next(
-        (
-            child
-            for child in form.findChildren(
-                QtWidgets.QWidget, options=QtCore.Qt.FindDirectChildrenOnly
-            )
-            if child.objectName() in {playback_controls, playback_short_name}
-        ),
-        None,
-    )
-    if row is None or row.layout() is None:
-        raise RuntimeError("Cannot access the Maya playback controls layout.")
-
-    for old_filter in row.findChildren(QtCore.QObject, _LAYOUT_FILTER_NAME):
-        row.removeEventFilter(old_filter)
-        old_filter.deleteLater()
-    if cmds.control(BUTTON_NAME, exists=True):
-        cmds.deleteUI(BUTTON_NAME)
-    old_hosts = [
-        host
-        for host in row.findChildren(QtWidgets.QWidget, BUTTON_HOST_NAME)
-        if host.parentWidget() is row
-    ]
-    for old_host in old_hosts:
-        old_host.setParent(None)
-        old_host.deleteLater()
-    old_highlight_frames = [
-        highlight_frame
-        for highlight_frame in form.findChildren(QtWidgets.QFrame, HIGHLIGHT_FRAME_NAME)
-        if highlight_frame.parentWidget() is form
-    ]
-    for old_highlight_frame in old_highlight_frames:
-        old_highlight_frame.setParent(None)
-        old_highlight_frame.deleteLater()
-    QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
-
-    row_children = cmds.layout(playback_controls, query=True, childArray=True) or []
-    native_buttons = [
-        name for name in row_children if cmds.symbolButton(name, exists=True)
-    ]
-    if not native_buttons:
-        raise RuntimeError("Maya playback controls do not contain any buttons.")
-    reference_pointer = omui.MQtUtil.findControl(native_buttons[-1])
-    if reference_pointer is None:
-        raise RuntimeError("Cannot access a Maya playback button.")
-    reference = shiboken2.wrapInstance(int(reference_pointer), QtWidgets.QWidget)
-
-    cmds.formLayout(
-        form_name,
-        edit=True,
-        attachForm=[
-            (frame_name, "left", 16),
-            (playback_controls, "right", 7),
-        ],
-        attachControl=[(frame_name, "right", 8, time_field_row)],
-    )
-
-    button_size = reference.size()
-    _BUTTON_HOST = QtWidgets.QWidget(row)
-    _BUTTON_HOST.setObjectName(BUTTON_HOST_NAME)
-    _BUTTON_HOST.setFixedSize(button_size.width(), row.height())
-    _BUTTON_HOST.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-    _BUTTON = QtWidgets.QPushButton(_BUTTON_HOST)
-    _BUTTON.setObjectName(BUTTON_NAME)
-    _BUTTON.setFixedSize(button_size)
-    _BUTTON.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-    row.layout().addWidget(_BUTTON_HOST)
-    QtWidgets.QApplication.processEvents()
-    normal_icon, hover_icon = _style_button(_BUTTON)
-
-    _HIGHLIGHT_FRAME = QtWidgets.QFrame(form)
-    _HIGHLIGHT_FRAME.setObjectName(HIGHLIGHT_FRAME_NAME)
-    _HIGHLIGHT_FRAME.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
-    _HIGHLIGHT_FRAME.setFocusPolicy(QtCore.Qt.NoFocus)
-    _HIGHLIGHT_FRAME.setStyleSheet(
-        f"QFrame#{HIGHLIGHT_FRAME_NAME} {{"
-        f"border: {_BUTTON_BORDER_WIDTH}px solid #66CC66; "
-        "border-radius: 4px; background: transparent;"
-        "}"
-    )
-
-    _LAYOUT_FILTER = _PlaybackButtonLayoutFilter(
-        row,
-        reference,
-        _BUTTON_HOST,
-        _BUTTON,
-        form,
-        _HIGHLIGHT_FRAME,
-    )
-    for watched in (form, row, _BUTTON_HOST, _BUTTON):
-        watched.installEventFilter(_LAYOUT_FILTER)
-    _LAYOUT_FILTER.align()
-    _MENU = _create_options_menu(_BUTTON)
-    _MENU_FILTER = _OptionsMenuEventFilter(_MENU, _BUTTON, normal_icon, hover_icon)
-    _BUTTON.installEventFilter(_MENU_FILTER)
-    _BUTTON.clicked.connect(_run_playblast)
+    _BUTTON = _build_button(None)
     return _BUTTON
+
+
+def attach_button_in_maya():
+    btn = create_button()
+    attach_timeslider.attach(btn)

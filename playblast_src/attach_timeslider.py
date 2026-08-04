@@ -1,19 +1,3 @@
-"""把自定义 Qt 控件塞进 Maya timeSlider 的 MainTimeSliderLayout。
-
-用法（Maya 脚本编辑器）:
-
-    from PySide2 import QtWidgets
-    from playblast_src import attach_timeslider
-
-    button = QtWidgets.QPushButton("我的按钮")
-    button.setMinimumHeight(30)
-    attach_timeslider.attach(button)
-
-说明:
-    attach() 会为每个 timeControl 找到它的 MainTimeSliderLayout，
-    把它包进一个 host（QHBoxLayout），并把传入的自定义控件排在旁边。
-"""
-
 from __future__ import annotations
 
 import maya.cmds as cmds
@@ -45,16 +29,9 @@ def _find_layout_from(widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
         current = current.parent()
         steps += 1
         if steps > MAX_PARENT_STEPS:
-            raise RuntimeError(
-                f"Exceeded {MAX_PARENT_STEPS} parent steps while looking for "
-                f"'{TARGET_LAYOUT_NAME}' from "
-                f"'{widget.objectName() or widget}'."
-            )
+            raise RuntimeError(f"Exceeded {MAX_PARENT_STEPS} parent steps while looking for '{TARGET_LAYOUT_NAME}' from '{widget.objectName() or widget}'.")
     if current is None:
-        raise RuntimeError(
-            f"Reached the top of the widget tree without finding "
-            f"'{TARGET_LAYOUT_NAME}' from '{widget.objectName() or widget}'."
-        )
+        raise RuntimeError(f"Reached the top of the widget tree without finding '{TARGET_LAYOUT_NAME}' from '{widget.objectName() or widget}'.")
     return current
 
 
@@ -75,17 +52,20 @@ def attach(widget: QtWidgets.QWidget) -> list[QtWidgets.QWidget]:
         if time_control_widget is None:
             continue
 
+        widget.__keepSrc = []
         child_to_wrap = _find_layout_from(time_control_widget)
         target_parent = child_to_wrap.parent()
+        widget.__keepSrc.append(child_to_wrap)
+        widget.__keepSrc.append(target_parent)
 
         host = QtWidgets.QWidget(target_parent)
         host.setObjectName(f"MyCustomHamburgerBox_{index}")
 
         h_layout = QtWidgets.QHBoxLayout(host)
-        h_layout.setContentsMargins(0, 0, 0, 0)
+        h_layout.setContentsMargins(0, 0, 20, 0)
 
         h_layout.addWidget(child_to_wrap)  # 原来的 timeSlider 内容
-        h_layout.addWidget(widget)         # 传入的自定义控件（替换原 my_new_btn）
+        h_layout.addWidget(widget)  # 传入的自定义控件（替换原 my_new_btn）
 
         if target_parent.layout() is not None:
             target_parent.layout().addWidget(host)

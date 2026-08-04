@@ -273,7 +273,7 @@ def _playblast_sequence(
     except Exception as err:
         shutil.rmtree(output_dir, ignore_errors=True)
         raise RuntimeError(f"Write sequence error: {err}") from err
-
+    print(output_dir, sequence_pattern, fps)
     return (output_dir, sequence_pattern, fps)
 
 
