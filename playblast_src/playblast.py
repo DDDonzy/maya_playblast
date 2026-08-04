@@ -11,6 +11,8 @@ from maya.api import OpenMaya, OpenMayaUI
 
 import imageio_ffmpeg  # ty:ignore[unresolved-import]
 
+import scene_audio
+
 FFMPEG_PATH = Path(imageio_ffmpeg.get_ffmpeg_exe())
 
 SEQUENCE_NAME = "SEQUENCE"
@@ -222,8 +224,14 @@ def _playblast_sequence(
     percent: int = DEFAULT_SCALE,
     frame_padding: int = FRAME_PADDING,
     frame_format: str = DEFAULT_FRAME_FORMAT,
-) -> tuple[Path, Path, float]:
-    """将指定 viewport 输出为唯一临时目录中的图像序列。"""
+    start_time: float | None = None,
+    end_time: float | None = None,
+) -> tuple[Path, Path, float, int]:
+    """将指定 viewport 输出为唯一临时目录中的图像序列。
+
+    start_time/end_time 与场景时间单位一致（不传则使用 playblast 默认播放范围）；
+    返回值追加实际生成的帧数，用于音频对齐与视频时长计算。
+    """
     frame_format = frame_format.lower()
     _validate_frame_format(frame_format)
     _validate_scale(percent)
@@ -250,7 +258,7 @@ def _playblast_sequence(
         mel.eval("getEditorViewVars();")
         try:
             mel.eval("setPlayblastViewVars();")
-            cmds.playblast(
+            pb_kwargs = dict(
                 filename=sequence_prefix.as_posix(),
                 editorPanelName=editor,
                 format="image",
@@ -265,6 +273,10 @@ def _playblast_sequence(
                 widthHeight=width_height,
                 viewer=False,
             )
+            if start_time is not None:
+                pb_kwargs["startTime"] = start_time
+                pb_kwargs["endTime"] = end_time
+            cmds.playblast(**pb_kwargs)
         finally:
             mel.eval("restoreEditorViewVars();")
 
@@ -273,8 +285,9 @@ def _playblast_sequence(
     except Exception as err:
         shutil.rmtree(output_dir, ignore_errors=True)
         raise RuntimeError(f"Write sequence error: {err}") from err
-    print(output_dir, sequence_pattern, fps)
-    return (output_dir, sequence_pattern, fps)
+    frame_count = len(list(output_dir.glob(f"{SEQUENCE_NAME}.*.{frame_format}")))
+    print(output_dir, sequence_pattern, fps, frame_count)
+    return (output_dir, sequence_pattern, fps, frame_count)
 
 
 def sequence_to_video(
@@ -284,9 +297,18 @@ def sequence_to_video(
     container: str = DEFAULT_CONTAINER,
     codec: str = DEFAULT_CODEC,
     quality: str = DEFAULT_QUALITY,
+    audio: scene_audio.SceneAudio | None = None,
+    start_time: float = 0.0,
+    frame_count: int | None = None,
     ffmpeg: str | Path = FFMPEG_PATH,
 ) -> Path:
-    """使用 FFmpeg 将连续图像序列转换为视频。"""
+    """使用 FFmpeg 将连续图像序列转换为视频。
+
+    Args:
+        audio: 场景音频信息；None 时不带音轨。
+        start_time: 拍屏范围起点（秒），用于音频与视频的时间轴对齐。
+        frame_count: 序列实际帧数，用于计算视频时长并精确裁切音频。
+    """
     container = container.lower()
     codec = codec.lower()
     quality = quality.lower()
@@ -301,6 +323,34 @@ def sequence_to_video(
 
     encoder = CODEC_ENCODERS[codec]
     crf = QUALITY_CRF[quality][codec]
+
+    audio_input: list[str] = []
+    audio_output: list[str] = []
+    if audio is not None:
+        if frame_count is None or frame_count <= 0:
+            raise ValueError("frame_count is required when audio is provided.")
+        video_duration = frame_count / fps
+        # 音频时间轴起点 = audio.start；视频 0 时刻 = 时间轴 start_time。
+        # skip：音频已早于视频开始的部分（跳过文件开头）；
+        # delay：音频晚于视频开始的部分（补静音）；
+        # audio_len：只裁音频不裁视频，避免 -shortest 提前截断视频。
+        skip = max(0.0, start_time - audio.start)
+        delay = max(0.0, audio.start - start_time)
+        audio_len = video_duration - delay
+        if audio_len <= 0:
+            cmds.warning(
+                f"Audio starts after the playblast range ends; "
+                f"exporting without sound: {audio.path}"
+            )
+        else:
+            if skip > 0:
+                audio_input.extend(("-ss", f"{skip:g}"))
+            audio_input.extend(("-t", f"{audio_len:g}", "-i", audio.path.as_posix()))
+            audio_output.extend(("-c:a", "aac", "-b:a", "192k"))
+            delay_ms = int(round(delay * 1000))
+            if delay_ms > 0:
+                audio_output.extend(("-af", f"adelay={delay_ms}:all=1"))
+
     cmd = [
         Path(ffmpeg).as_posix(),
         "-y",
@@ -310,21 +360,27 @@ def sequence_to_video(
         "0",
         "-i",
         sequence_pattern.as_posix(),
-        "-c:v",
-        encoder,
-        "-vf",
-        "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-        "-pix_fmt",
-        "yuv420p",
-        "-color_primaries",
-        "bt709",
-        "-color_trc",
-        "bt709",
-        "-colorspace",
-        "bt709",
-        "-crf",
-        crf,
     ]
+    cmd.extend(audio_input)
+    cmd.extend(
+        [
+            "-c:v",
+            encoder,
+            "-vf",
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-pix_fmt",
+            "yuv420p",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-colorspace",
+            "bt709",
+            "-crf",
+            crf,
+        ]
+    )
+    cmd.extend(audio_output)
     if codec == "av1":
         cmd.extend(("-b:v", "0", "-cpu-used", "6"))
     if codec == "hevc" and container in {"mp4", "mov"}:
@@ -362,12 +418,15 @@ def playblast(
     quality: str = DEFAULT_QUALITY,
     auto_play: bool = False,
     clean_cache: bool = True,
+    sound: bool = False,
 ) -> Path:
     """输出激活 viewport 为视频。
 
     Args:
         clean_cache: True 时转换完成后清理临时图像序列目录；
             False 时保留中间图片（便于排查 FFmpeg / 序列问题）。
+        sound: True 时从场景时间滑块读取音频并混入视频；
+            场景无音频时警告并继续输出无声视频。
     """
     frame_format = frame_format.lower()
     container = container.lower()
@@ -381,10 +440,23 @@ def playblast(
     width_height = _resolve_width_height(resolution)
 
     video_path = _load_path(container)
-    sequence_dir, sequence_pattern, fps = _playblast_sequence(
+
+    audio = None
+    if sound:
+        audio = scene_audio.get_scene_audio()
+        if audio is None:
+            cmds.warning("No audio loaded on the time slider; exporting without sound.")
+
+    start_time = cmds.playbackOptions(query=True, minTime=True)
+    end_time = cmds.playbackOptions(query=True, maxTime=True)
+    start_sec = scene_audio.to_seconds(start_time)
+
+    sequence_dir, sequence_pattern, fps, frame_count = _playblast_sequence(
         width_height=width_height,
         percent=scale,
         frame_format=frame_format,
+        start_time=start_time,
+        end_time=end_time,
     )
 
     try:
@@ -395,6 +467,9 @@ def playblast(
             container=container,
             codec=codec,
             quality=quality,
+            audio=audio,
+            start_time=start_sec,
+            frame_count=frame_count,
         )
     except Exception:
         if clean_cache:

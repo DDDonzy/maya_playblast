@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="200"
+     height="200"
+     viewBox="69 39 1440 1170"
+     preserveAspectRatio="xMidYMid meet"
+     role="img"
+     aria-labelledby="title desc"
+     shape-rendering="crispEdges">
+  <title id="title">Video play icon</title>
+  <desc id="desc">A dark gray film frame with an orange play symbol.</desc>
+
+  <!-- Transparent canvas: the checkerboard in the reference is not part of the icon. -->
+
+  <!-- Outer film body -->
+  <rect x="69" y="39" width="1440" height="1170" fill="#383838"/>
+
+  <!-- Light inner frame -->
+  <rect x="129" y="99" width="1320" height="1050" fill="#b3b3b3"/>
+
+  <!-- Film window -->
+  <rect x="189" y="279" width="1200" height="690" fill="#383838"/>
+
+  <!-- Top perforations -->
+  <g fill="#383838">
+    <rect x="189"  y="159" width="120" height="60"/>
+    <rect x="369"  y="159" width="120" height="60"/>
+    <rect x="549"  y="159" width="120" height="60"/>
+    <rect x="729"  y="159" width="120" height="60"/>
+    <rect x="909"  y="159" width="120" height="60"/>
+    <rect x="1089" y="159" width="120" height="60"/>
+    <rect x="1269" y="159" width="120" height="60"/>
+  </g>
+
+  <!-- Bottom perforations -->
+  <g fill="#383838">
+    <rect x="189"  y="1029" width="120" height="60"/>
+    <rect x="369"  y="1029" width="120" height="60"/>
+    <rect x="549"  y="1029" width="120" height="60"/>
+    <rect x="729"  y="1029" width="120" height="60"/>
+    <rect x="909"  y="1029" width="120" height="60"/>
+    <rect x="1089" y="1029" width="120" height="60"/>
+    <rect x="1269" y="1029" width="120" height="60"/>
+  </g>
+
+  <!-- Smooth play-symbol shadow -->
+  <path fill="#6b463b"
+        opacity="0.72"
+        shape-rendering="geometricPrecision"
+        d="M687 441 L999 636 L687 831 Z"/>
+
+  <!-- Orange play symbol -->
+  <path fill="#e96f3d"
+        shape-rendering="geometricPrecision"
+        d="M669 429 L981 624 L669 819 Z"/>
+
+  <!-- Subtle left-edge highlight -->
+  <path fill="#f58a57"
+        shape-rendering="geometricPrecision"
+        d="M669 429 L687 440 L687 808 L669 819 Z"/>
+
+</svg>

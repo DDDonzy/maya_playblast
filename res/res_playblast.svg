@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="200"
+     height="200"
+     viewBox="69 39 1440 1170"
+     role="img"
+     aria-labelledby="title desc"
+     shape-rendering="crispEdges">
+  <title id="title">Video plus icon</title>
+  <desc id="desc">A dark gray film frame with a blue plus symbol.</desc>
+
+  <!-- Transparent canvas: the checkerboard in the reference is not part of the icon. -->
+
+  <!-- Outer film body -->
+  <rect x="69" y="39" width="1440" height="1170" fill="#383838"/>
+
+  <!-- Light inner frame -->
+  <rect x="129" y="99" width="1320" height="1050" fill="#b3b3b3"/>
+
+  <!-- Film window -->
+  <rect x="189" y="279" width="1200" height="690" fill="#383838"/>
+
+  <!-- Top perforations -->
+  <g fill="#383838">
+    <rect x="189"  y="159" width="120" height="60"/>
+    <rect x="369"  y="159" width="120" height="60"/>
+    <rect x="549"  y="159" width="120" height="60"/>
+    <rect x="729"  y="159" width="120" height="60"/>
+    <rect x="909"  y="159" width="120" height="60"/>
+    <rect x="1089" y="159" width="120" height="60"/>
+    <rect x="1269" y="159" width="120" height="60"/>
+  </g>
+
+  <!-- Bottom perforations -->
+  <g fill="#383838">
+    <rect x="189"  y="1029" width="120" height="60"/>
+    <rect x="369"  y="1029" width="120" height="60"/>
+    <rect x="549"  y="1029" width="120" height="60"/>
+    <rect x="729"  y="1029" width="120" height="60"/>
+    <rect x="909"  y="1029" width="120" height="60"/>
+    <rect x="1089" y="1029" width="120" height="60"/>
+    <rect x="1269" y="1029" width="120" height="60"/>
+  </g>
+
+  <!-- Center plus symbol: RGB(58, 140, 171) -->
+  <path fill="rgb(58, 140, 171)"
+        transform="translate(789 624) scale(1.7424) translate(-789 -624)" d="
+    M744 444
+    H834 V579
+    H969 V669
+    H834 V804
+    H744 V669
+    H609 V579
+    H744 Z"/>
+
+</svg>

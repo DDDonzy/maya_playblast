@@ -17,11 +17,13 @@ from PySide2 import QtCore, QtGui, QtWidgets  # ty:ignore[unresolved-import]
 
 import playblast
 import attach_timeslider
+import qrc_res_playblast  # noqa: F401 注册 Qt 资源 :/res_playblast_play.svg
 
 BUTTON_NAME = "playblastButton"
 
 MENU_NAME = "playblastOptionsMenu"
 _AUTO_PLAY_OPTION = "playblastToolsAutoPlay"
+_SOUND_OPTION = "playblastToolsSound"
 _FRAME_FORMAT_OPTION = "playblastToolsFrameFormat"
 _CONTAINER_OPTION = "playblastToolsContainer"
 _CODEC_OPTION = "playblastToolsCodec"
@@ -58,27 +60,27 @@ _DEBUG_WINDOW = None
 
 
 class _OptionsMenuEventFilter(QtCore.QObject):
-    """消费按钮右键事件，阻止 Maya timeSlider 菜单接管。"""
+    """消费按钮右键事件，阻止 Maya timeSlider 菜单接管；左键触发 playblast。"""
 
     def __init__(
         self,
         menu: QtWidgets.QMenu,
         parent: QtWidgets.QWidget,
-        normal_icon: QtGui.QIcon,
-        hover_icon: QtGui.QIcon,
+        normal_pixmap: QtGui.QPixmap,
+        hover_pixmap: QtGui.QPixmap,
     ) -> None:
         super().__init__(parent)
         self._menu = menu
-        self._button = parent
-        self._normal_icon = normal_icon
-        self._hover_icon = hover_icon
+        self._label = parent
+        self._normal_pixmap = normal_pixmap
+        self._hover_pixmap = hover_pixmap
 
     def eventFilter(self, watched, event) -> bool:
         event_type = event.type()
         if event_type == QtCore.QEvent.Enter:
-            self._button.setIcon(self._hover_icon)
+            self._label.setPixmap(self._hover_pixmap)
         elif event_type == QtCore.QEvent.Leave:
-            self._button.setIcon(self._normal_icon)
+            self._label.setPixmap(self._normal_pixmap)
         elif event_type == QtCore.QEvent.MouseButtonPress:
             if event.button() == QtCore.Qt.RightButton:
                 event.accept()
@@ -86,6 +88,11 @@ class _OptionsMenuEventFilter(QtCore.QObject):
         elif event_type == QtCore.QEvent.MouseButtonRelease:
             if event.button() == QtCore.Qt.RightButton:
                 self._menu.popup(event.globalPos())
+                event.accept()
+                return True
+            if event.button() == QtCore.Qt.LeftButton:
+                # QLabel 没有 clicked 信号，左键释放时触发 playblast
+                _run_playblast()
                 event.accept()
                 return True
         elif event_type == QtCore.QEvent.ContextMenu:
@@ -116,6 +123,12 @@ def _read_auto_play() -> bool:
     return bool(cmds.optionVar(query=_AUTO_PLAY_OPTION))
 
 
+def _read_sound() -> bool:
+    if not cmds.optionVar(exists=_SOUND_OPTION):
+        cmds.optionVar(intValue=(_SOUND_OPTION, 1))
+    return bool(cmds.optionVar(query=_SOUND_OPTION))
+
+
 def _read_video_settings() -> tuple[str, str]:
     container = _read_choice(
         _CONTAINER_OPTION,
@@ -139,6 +152,7 @@ def _default_settings() -> dict[str, object]:
         "scale": playblast.DEFAULT_SCALE,
         "quality": playblast.DEFAULT_QUALITY,
         "auto_play": True,
+        "sound": True,
     }
 
 
@@ -174,6 +188,7 @@ def _read_settings() -> dict[str, object]:
         "scale": scale,
         "quality": quality,
         "auto_play": _read_auto_play(),
+        "sound": _read_sound(),
     }
 
 
@@ -185,6 +200,7 @@ def _write_settings(settings: dict[str, object]) -> None:
     _set_choice(_SCALE_OPTION, str(settings["scale"]))
     _set_choice(_QUALITY_OPTION, str(settings["quality"]))
     cmds.optionVar(intValue=(_AUTO_PLAY_OPTION, int(bool(settings["auto_play"]))))
+    cmds.optionVar(intValue=(_SOUND_OPTION, int(bool(settings["sound"]))))
 
 
 def _normalize_preset_settings(data: object) -> dict[str, object]:
@@ -198,6 +214,7 @@ def _normalize_preset_settings(data: object) -> dict[str, object]:
     quality = str(data.get("quality", "")).lower()
     scale = data.get("scale")
     auto_play = data.get("auto_play")
+    sound = data.get("sound")
 
     if frame_format not in playblast.FRAME_FORMATS:
         raise ValueError(f"Invalid frame format: {frame_format}")
@@ -213,6 +230,11 @@ def _normalize_preset_settings(data: object) -> dict[str, object]:
         raise ValueError(f"Invalid quality: {quality}")
     if type(auto_play) is not bool:
         raise ValueError(f"Invalid Auto Play value: {auto_play}")
+    # 旧版 preset 没有 sound 键，默认 False，避免整份 preset 被忽略。
+    if sound is None:
+        sound = False
+    elif type(sound) is not bool:
+        raise ValueError(f"Invalid Sound value: {sound}")
 
     return {
         "frame_format": frame_format,
@@ -222,6 +244,7 @@ def _normalize_preset_settings(data: object) -> dict[str, object]:
         "scale": scale,
         "quality": quality,
         "auto_play": auto_play,
+        "sound": sound,
     }
 
 
@@ -316,6 +339,16 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
 
     auto_play.toggled.connect(set_auto_play)
 
+    sound = menu.addAction("Sound")
+    sound.setCheckable(True)
+    sound.setChecked(_read_sound())
+
+    def set_sound(checked: bool) -> None:
+        cmds.optionVar(intValue=(_SOUND_OPTION, int(checked)))
+        mark_custom_settings()
+
+    sound.toggled.connect(set_sound)
+
     menu.addSection("Container")
     container, codec = _read_video_settings()
     container_actions = _add_choice_actions(menu, _CONTAINER_LABELS, container)
@@ -402,6 +435,7 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
             settings = presets[name]
             _write_settings(settings)
             auto_play.setChecked(bool(settings["auto_play"]))
+            sound.setChecked(bool(settings["sound"]))
             frame_actions[str(settings["frame_format"])].setChecked(True)
             container_value = str(settings["container"])
             container_actions[container_value].setChecked(True)
@@ -522,7 +556,7 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
     apply_preset(current_preset)
 
     menu.addSection("Playblast")
-    playblast_action = menu.addAction(QtGui.QIcon(":playblast.png"), "Playblast")
+    playblast_action = menu.addAction(QtGui.QIcon(":/res_playblast_play.svg"), "Playblast")
     playblast_action.triggered.connect(_run_playblast)
 
     button.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
@@ -530,7 +564,7 @@ def _create_options_menu(button: QtWidgets.QPushButton) -> QtWidgets.QMenu:
 
 
 def _hover_pixmap(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
-    """把 PNG 图标提亮一档，用于悬停高亮（不画背景框）。"""
+    """把图标提亮一档，用于悬停高亮（不画背景框）。"""
     highlighted = QtGui.QPixmap(pixmap)
     painter = QtGui.QPainter(highlighted)
     painter.setCompositionMode(QtGui.QPainter.CompositionMode_SourceAtop)
@@ -539,58 +573,103 @@ def _hover_pixmap(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
     return highlighted
 
 
-def _crop_transparent_padding(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
-    """裁掉图标四周的透明留白，让图形尽量占满，放大后更显眼。"""
-    image = pixmap.toImage()
-    if image.isNull() or not image.hasAlphaChannel():
-        return pixmap
+def _render_svg_pixmap() -> QtGui.QPixmap:
+    """渲染 SVG 资源为 QPixmap（QLabel 美术资源，透明背景）。
 
-    left = image.width()
-    top = image.height()
-    right = -1
-    bottom = -1
-    for y in range(image.height()):
-        for x in range(image.width()):
-            if image.pixelColor(x, y).alpha() <= 8:
-                continue
-            left = min(left, x)
-            top = min(top, y)
-            right = max(right, x)
-            bottom = max(bottom, y)
+    QSvgRenderer.render(painter) 无目标矩形时不保持宽高比（会把 viewBox 拉伸铺满），
+    必须显式按比例计算目标矩形，居中渲染到画布。
+    """
+    from PySide2 import QtSvg  # noqa: PLC0415
 
-    if right < left or bottom < top:
-        return pixmap
-    return pixmap.copy(left, top, right - left + 1, bottom - top + 1)
+    renderer = QtSvg.QSvgRenderer(":/res_playblast_play.svg")
+    if not renderer.isValid():
+        raise RuntimeError("Failed to load :/res_playblast_play.svg")
+
+    canvas = renderer.defaultSize()  # 200x200 画布
+    view_box = renderer.viewBox()  # 内容边界（69,39,1440,1170）
+    scale = min(canvas.width() / view_box.width(), canvas.height() / view_box.height())
+    target = QtCore.QSize(
+        int(view_box.width() * scale), int(view_box.height() * scale)
+    )
+    offset_x = (canvas.width() - target.width()) / 2
+    offset_y = (canvas.height() - target.height()) / 2
+
+    pixmap = QtGui.QPixmap(canvas)
+    pixmap.fill(QtCore.Qt.transparent)
+    painter = QtGui.QPainter(pixmap)
+    try:
+        renderer.render(
+            painter,
+            QtCore.QRectF(offset_x, offset_y, target.width(), target.height()),
+        )
+    finally:
+        painter.end()
+    return pixmap
 
 
-def _build_button(parent: QtWidgets.QWidget | None = None) -> QtWidgets.QPushButton:
+def _find_maya_icon_label() -> QtWidgets.QLabel | None:
+    """查找 Maya 主窗口中第一个可见且带 pixmap 的 QLabel，作为外观模板。"""
+    import maya.OpenMayaUI as omui  # noqa: PLC0415
+
+    main_window_ptr = omui.MQtUtil.mainWindow()
+    if main_window_ptr is None:
+        return None
+    maya_win = shiboken2.wrapInstance(int(main_window_ptr), QtWidgets.QWidget)
+    for label in maya_win.findChildren(QtWidgets.QLabel):
+        if not label.isVisible() or not shiboken2.isValid(label):
+            continue
+        getter = getattr(label, "pixmap", None)
+        if callable(getter) and getter() is not None and not getter().isNull():
+            return label
+    return None
+
+
+def _apply_maya_label_style(label: QtWidgets.QLabel) -> None:
+    """从 Maya 图标 QLabel 复制外观配置，使控件与 Maya 原生一致。"""
+    template = _find_maya_icon_label()
+    if template is not None and shiboken2.isValid(template):
+        try:
+            label.setFont(template.font())
+            label.setPalette(template.palette())
+            label.setSizePolicy(template.sizePolicy())
+            label.setAlignment(template.alignment())
+            label.setFocusPolicy(template.focusPolicy())
+            label.setWordWrap(template.wordWrap())
+            label.setMargin(template.margin())
+            label.setIndent(template.indent())
+            label.setCursor(template.cursor())
+        except RuntimeError:
+            # 模板在处理期间被 Maya 销毁，跳过复制
+            pass
+    # pixmap 随 label 尺寸自动缩放（Maya 图标 QLabel 的关键机制）
+    label.setScaledContents(True)
+    label.setAutoFillBackground(False)
+
+
+def _build_button(parent: QtWidgets.QWidget | None = None) -> QtWidgets.QLabel:
     """在 parent 下创建 Playblast 按钮，接好左键播放 / 右键菜单逻辑。"""
     button = QtWidgets.QPushButton(parent)
     button.setObjectName(BUTTON_NAME)
     button.setFixedSize(32, 32)
 
-    # 强制缩放：先裁透明留白，再平滑放大到接近按钮大小，让图标显眼
-    icon_size = button.height() - 2
-    base = _crop_transparent_padding(QtGui.QPixmap(":playblast.png")).scaled(
-        icon_size,
-        icon_size,
-        QtCore.Qt.KeepAspectRatio,
-        QtCore.Qt.SmoothTransformation,
-    )
-    normal_icon = QtGui.QIcon(base)
-    hover_icon = QtGui.QIcon(_hover_pixmap(base))
+    label = QtWidgets.QLabel(parent)
+    label.setObjectName(BUTTON_NAME)
+    # 与 Maya 原生图标 QLabel 一致（_qt: 40x40, minimumSizeHint 40x40）
+    label.setFixedSize(40, 40)
+    # QLabel 默认不产生 hover 事件，必须显式开启
+    label.setAttribute(QtCore.Qt.WA_Hover)
+    _apply_maya_label_style(label)
 
-    button.setIcon(normal_icon)
-    button.setIconSize(QtCore.QSize(icon_size, icon_size))
-    button.setToolTip("Playblast\nRight-click for output options")
-    # 无背景框：透明背景 + 无边框，悬停高亮直接体现在 PNG 图标上
-    button.setStyleSheet(f"QPushButton#{BUTTON_NAME} {{background: transparent; border: none;}}")
+    # 美术资源：SVG 渲染为 pixmap，scaledContents 自动适配尺寸
+    normal_pixmap = _render_svg_pixmap()
+    hover_pixmap = _hover_pixmap(normal_pixmap)
+    label.setPixmap(normal_pixmap)
+    label.setToolTip("Playblast\nRight-click for output options")
 
-    menu = _create_options_menu(button)
-    menu_filter = _OptionsMenuEventFilter(menu, button, normal_icon, hover_icon)
-    button.installEventFilter(menu_filter)
-    button.clicked.connect(_run_playblast)
-    return button
+    menu = _create_options_menu(label)
+    menu_filter = _OptionsMenuEventFilter(menu, label, normal_pixmap, hover_pixmap)
+    label.installEventFilter(menu_filter)
+    return label
 
 
 def show_debug_window() -> QtWidgets.QDialog:
@@ -615,7 +694,7 @@ def show_debug_window() -> QtWidgets.QDialog:
     return _DEBUG_WINDOW
 
 
-def create_button() -> QtWidgets.QPushButton:
+def create_button() -> QtWidgets.QLabel:
     """创建 Playblast 按钮（左键播放，右键选项），不附加到 Maya。
 
     返回的按钮没有父控件，需要自己调用 show() 或挂到某个布局/窗口。
