@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import maya.cmds as cmds
 import maya.OpenMayaUI as omui
-from shiboken2 import wrapInstance
-
+from shiboken2 import wrapInstance  # ty:ignore[unresolved-import]
 from PySide2 import QtWidgets  # ty:ignore[unresolved-import]
+
+from maya import cmds
 
 TARGET_LAYOUT_NAME = "MainTimeSliderLayout"
 MAX_PARENT_STEPS = 20
@@ -12,7 +12,7 @@ MAX_PARENT_STEPS = 20
 
 def _get_maya_control(name: str) -> QtWidgets.QWidget | None:
     """按 Maya 控件名取回其 Qt 控件；找不到返回 None。"""
-    maya_control = omui.MQtUtil.findControl(name)
+    maya_control = omui.MQtUtil.findControl(name)  # ty:ignore[unresolved-attribute]
     if not maya_control:
         return None
     return wrapInstance(int(maya_control), QtWidgets.QWidget)

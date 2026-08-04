@@ -1,5 +1,6 @@
 <RCC>
   <qresource prefix="/">
     <file>res_playblast_play.svg</file>
+    <file>res_playblast_play_hover.svg</file>
   </qresource>
 </RCC>

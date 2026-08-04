@@ -2,4 +2,3 @@
 PYTHONPATH +:= ./
 PYTHONPATH +:= ./ffmpeg
 PYTHONPATH +:= ./scripts
-PYTHONPATH +:= ./playblast_src
