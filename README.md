@@ -28,7 +28,6 @@ If drag-and-drop does not work, add the `modules` directory to Maya's `MAYA_MODU
 |---|---|
 | Left-click the button | Save dialog opens, exports video with current settings |
 | Right-click the button | Opens the output options menu |
-| Hover over the button | Icon highlights |
 
 ### Output options (right-click menu)
 
